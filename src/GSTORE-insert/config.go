@@ -9,12 +9,13 @@ import (
 
 // Config is info from config file
 type Config struct {
-	IP   string
-	Port string
-
+	IP     string
+	Port   string
 	DBUser string
 	DBPass string
 	DBName string
+	DBHost string
+	DBPort string
 }
 
 // ReadConfig reads info from config file

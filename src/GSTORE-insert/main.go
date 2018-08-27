@@ -1,12 +1,16 @@
 package main
 
 import (
+	// "bytes"
+	"database/sql"
 	"fmt"
-	// _ "github.com/lib/pq"
-	// "database/sql"
+	"github.com/buger/jsonparser"
+	_ "github.com/lib/pq"
 	"io/ioutil"
 	"log"
 	"os"
+	"path/filepath"
+	"strconv"
 	"time"
 )
 
@@ -23,9 +27,12 @@ var CODENAME string
 var altpath string
 
 //dbuser pass and name and secret to be pulled from config
-var dbuser string
-var dbpass string
+var user string
+var password string
 var dbname string
+var host string
+var port int
+var psqlInfo string
 
 func main() {
 	VERSION = "0.0"
@@ -40,7 +47,7 @@ func main() {
 				if pathErr != nil {
 					fmt.Println(pathErr)
 				}
-				d1 := []byte("#Log files location\nLogDir = \"/var/log/\"\n\n#the server socket info\nIP = \"localhost\"\nPort = \"888\"")
+				d1 := []byte("#Log files location\nLogDir = \"/var/log/\"\n\n#DB connection info\nDBUser = \"pguser\"\nDBPass = \"pgpass\"\nDBName = \"gstorepgdb\"")
 				err := ioutil.WriteFile("/etc/GSTORE-insert/GSTORE-insert.conf", d1, 0644)
 				if err != nil {
 					fmt.Println(err)
@@ -54,9 +61,14 @@ func main() {
 
 		var configf = ReadConfig() //this is in config.go
 
-		dbuser = configf.DBUser
-		dbpass = configf.DBPass
+		host = configf.DBHost
+		port, _ = strconv.Atoi(configf.DBPort)
+		user = configf.DBUser
+		password = configf.DBPass
 		dbname = configf.DBName
+
+		psqlInfo = fmt.Sprintf("host=%s port=%d user=%s "+"password=%s dbname=%s sslmode=disable", host, port, user, password, dbname)
+
 		fmt.Println("b")
 		//Bulk Insert run every minute..
 		ticker := time.NewTicker(time.Minute * 1)
@@ -123,4 +135,50 @@ func BulkInsert() {
 	fmt.Printf("%v+\n", time.Now())
 
 	fmt.Println("BulkInsert Running")
+	db, err := sql.Open("postgres", psqlInfo)
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+	err = db.Ping()
+	if err != nil {
+		panic(err)
+	}
+
+	rows, err := db.Query("select json from datasets_in_progress where insert_type='queued'")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var json string
+		err := rows.Scan(&json)
+		if err != nil {
+			log.Fatal(err)
+		}
+		data := []byte(json)
+		Folder, valType, Offset, err := jsonparser.Get(data, "BulkData", "folder")
+		logErr(err)
+		if err == nil {
+			// n := bytes.Index(Folder, []byte{0})
+			// fmt.Println(string(Folder[:n]))
+			folder := string(Folder[:])
+			fmt.Println(valType)
+			fmt.Println(Offset)
+			files, err := filepath.Glob(folder + "*")
+			if err != nil {
+				fmt.Print(err)
+				os.Exit(1)
+				//TODO error should be written to db and status changed to error.
+			}
+			if len(files) == 0 {
+				//TODO error to db and change status.
+				fmt.Println("No files found in " + folder)
+			} else {
+				fmt.Println(files)
+			}
+		}
+
+	}
+
 }

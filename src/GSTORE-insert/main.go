@@ -4,6 +4,7 @@ import (
 	// "bytes"
 	"database/sql"
 	"fmt"
+	xj "github.com/basgys/goxml2json"
 	"github.com/buger/jsonparser"
 	_ "github.com/lib/pq"
 	"io/ioutil"
@@ -11,8 +12,62 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
+
+// type GSToRE struct {
+// 	Taxonomy string `json:"taxonomy"`
+// 	Basename string `json:"basename"`
+// 	Sources  []struct {
+// 		Mimetype  string   `json:"mimetype"`
+// 		Files     []string `json:"files"`
+// 		Set       string   `json:"set"`
+// 		External  string   `json:"external"`
+// 		Extension string   `json:"extension"`
+// 	} `json:"sources"`
+// 	Dippath     string   `json:"dippath"`
+// 	Description string   `json:"description"`
+// 	Author      string   `json:"author"`
+// 	Apps        []string `json:"apps"`
+// 	IsEmbargoed string   `json:"is_embargoed"`
+// 	Categories  []struct {
+// 		Subtheme  string `json:"subtheme"`
+// 		Theme     string `json:"theme"`
+// 		Groupname string `json:"groupname"`
+// 	} `json:"categories"`
+// 	Spatial struct {
+// 		Geomtype string `json:"geomtype"`
+// 		Epsg     int    `json:"epsg"`
+// 		Features int    `json:"features"`
+// 		Bbox     string `json:"bbox"`
+// 		Records  int    `json:"records"`
+// 	} `json:"spatial"`
+// 	Metadata struct {
+// 		XML      struct{} `json:"xml"`
+// 		Upgrade  string   `json:"upgrade"`
+// 		Standard string   `json:"standard"`
+// 	} `json:"metadata"`
+// 	OrigEpsg       int      `json:"orig_epsg"`
+// 	Epsg           int      `json:"epsg"`
+// 	Totalfiles     int      `json:"totalfiles"`
+// 	Firstname      string   `json:"firstname"`
+// 	Lastname       string   `json:"lastname"`
+// 	Nodeid         string   `json:"nodeid"`
+// 	DataoneArchive string   `json:"dataone_archive"`
+// 	Active         string   `json:"active"`
+// 	Folderlineage  []string `json:"folderlineage"`
+// 	Embargo        struct {
+// 		ReleaseDate string `json:"release_date"`
+// 		Embargoed   bool   `json:"embargoed"`
+// 	} `json:"embargo"`
+// 	Percentdone int      `json:"percentdone"`
+// 	Phone       string   `json:"phone"`
+// 	Standards   []string `json:"standards"`
+// 	Releasedate string   `json:"releasedate"`
+// 	Services    []string `json:"services"`
+// 	Formats     []string `json:"formats"`
+// }
 
 //VERSION is and exported variable so the handelers can use it.
 var VERSION string
@@ -33,6 +88,8 @@ var dbname string
 var host string
 var port int
 var psqlInfo string
+var formats string
+var fileformats []string
 
 func main() {
 	VERSION = "0.0"
@@ -66,12 +123,13 @@ func main() {
 		user = configf.DBUser
 		password = configf.DBPass
 		dbname = configf.DBName
-
+		formats = configf.FileFormats
+		fileformats = strings.Split(formats, ",")
 		psqlInfo = fmt.Sprintf("host=%s port=%d user=%s "+"password=%s dbname=%s sslmode=disable", host, port, user, password, dbname)
 
 		fmt.Println("b")
 		//Bulk Insert run every minute..
-		ticker := time.NewTicker(time.Minute * 1)
+		ticker := time.NewTicker(time.Second * 10)
 		go func() {
 			for t := range ticker.C {
 				BulkInsert()
@@ -157,14 +215,15 @@ func BulkInsert() {
 			log.Fatal(err)
 		}
 		data := []byte(json)
-		Folder, valType, Offset, err := jsonparser.Get(data, "BulkData", "folder")
+		Folder, valType, Offset, err := jsonparser.Get(data, "baseGeoFolder")
 		logErr(err)
 		if err == nil {
 			// n := bytes.Index(Folder, []byte{0})
 			// fmt.Println(string(Folder[:n]))
 			folder := string(Folder[:])
-			fmt.Println(valType)
-			fmt.Println(Offset)
+			//fmt.Println(folder)
+			//fmt.Println(valType)
+			//fmt.Println(Offset)
 			files, err := filepath.Glob(folder + "*")
 			if err != nil {
 				fmt.Print(err)
@@ -175,7 +234,123 @@ func BulkInsert() {
 				//TODO error to db and change status.
 				fmt.Println("No files found in " + folder)
 			} else {
-				fmt.Println(files)
+				//fmt.Println(files)
+				for _, file := range files {
+					//bn:=filepath.Base(file)
+					//fmt.Println(index)
+
+					
+
+					ext := filepath.Ext(file)
+					basename := strings.TrimRight(file, ext)
+					if contains(fileformats, ext) {
+
+						if ext == ".tif" || ext == ".tiff" {
+							SourcesFiles:=[]
+							demcheck, err := filepath.Glob(basename + ".dem")
+							logErr(err)
+							//if demcheck>0){
+							xmls, err := filepath.Glob(basename + "*.xml")
+							//fmt.Println(xmls)
+							  if err != nil {
+								//TODO Handle problem listing folders
+								fmt.Println(err)
+
+							} else {
+								//xmlchoice := ""
+								if len(xmls) > 0 {
+									for _, xmlfilepath := range xmls {
+										//fmt.Println(xmlfile)
+										//fmt.Println(xmlindex)
+										if strings.Contains(strings.ToLower(xmlfilepath), "fgdc") {
+											// xmlchoice = xmlfilepath
+											//fmt.Println(xmlchoice)
+											//	fmt.Println(file)
+											xmlfile, err := os.Open(xmlfilepath)
+											if err != nil {
+												log.Fatal(err)
+											}
+											// xml := strings.NewReader(xmlfile)
+											xmljson, err := xj.Convert(xmlfile)
+											if err != nil {
+												panic("That's embarrassing...")
+											}
+
+											//	fmt.Println(xmljson.String())
+											//GSToREJSON := `{"taxonomy":"vector","basename":"` + basename + `","sources":[{"mimetype":"application/x-zip-compressed","files":["/geodata/epscor1_CoverageCatalog/ROOT/Structures/NM_Address_20180613.zip"],"set":"original","external":"False","extension":"zip"}],"dippath":"RGIS/Structures","description":"New Mexico Structure Points 6-13-2018","author":"New Mexico Department of Finance and Administration","apps":["rgis"],"is_embargoed":"False","categories":[{"subtheme":"General","theme":"Land Use/Land Cover","groupname":"New Mexico"}],"spatial":{"geomtype":"POINT","epsg":4326,"features":939605,"bbox":"-109.309196418,31.3202520319,-103.051593326,37.0455301703","records":939605},"email":"gstore@edac.unm.ed","metadata":{"xml":` + xmljson.String() + `,"upgrade":"true","standard":"FGDC-STD-001-1998"},"orig_epsg":4326,"epsg":4326,"totalfiles":100,"firstname":"GSToRE","lastname":"Admin","nodeid":"9bd55a2e-474b-4167-b92f-008df1c0adb5","dataone_archive":"False","active":"True","folderlineage":["d2b7bf1e-d466-11e7-8325-cf521938ae66","9bd55a2e-474b-4167-b92f-008df1c0adb5"],"embargo":{"release_date":"2014-05-02","embargoed":false},"percentdone":0,"phone":"505-277-3622","standards":["FGDC-STD-001-1998","ISO-19115:2003"],"releasedate":"2018-08-27","services":["wms","wcs"],"formats":["zip"]}`
+											GSToREJSON := `{
+												"taxonomy": "geoimage",
+												"basename": "` + basename + `",
+												"sources": [{
+													"mimetype": "application/x-zip-compressed",
+													"files": ["/geodata/epscor1_CoverageCatalog/ROOT/Structures/NM_Address_20180613.zip"],
+													"set": "original",
+													"external": "False",
+													"extension": "zip"
+												}],
+												"dippath": "RGIS/Structures",
+												"description": "New Mexico Structure Points 6-13-2018",
+												"author": "New Mexico Department of Finance and Administration",
+												"apps": ["rgis"],
+												"is_embargoed": "False",
+												"categories": [{
+													"subtheme": "General",
+													"theme": "Land Use/Land Cover",
+													"groupname": "New Mexico"
+												}],
+												"spatial": {
+													"geomtype": "POINT",
+													"epsg": 4326,
+													"features": 939605,
+													"bbox": "-109.309196418,31.3202520319,-103.051593326,37.0455301703",
+													"records": 939605
+												},
+												"email": "gstore@edac.unm.ed",
+												"metadata": {
+													"xml": ` + xmljson.String() + `,
+												"orig_epsg": 4326,
+												"epsg": 4326,
+												"totalfiles": 100,
+												"firstname": "GSToRE",
+												"lastname": "Admin",
+												"nodeid": "9bd55a2e-474b-4167-b92f-008df1c0adb5",
+												"dataone_archive": "False",
+												"active": "True",
+												"folderlineage": [
+													"d2b7bf1e-d466-11e7-8325-cf521938ae66",
+													"9bd55a2e-474b-4167-b92f-008df1c0adb5"
+												],
+												"embargo": {
+													"release_date": "2014-05-02",
+													"embargoed": false
+												},
+												"percentdone": 0,
+												"phone": "505-277-3622",
+												"standards": [
+													"FGDC-STD-001-1998",
+													"ISO-19115:2003"
+												],
+												"releasedate": "2018-08-27",
+												"services": [
+													"wms",
+													"wCs"
+												],
+												"formats": ["zip"]
+											}`
+
+											fmt.Println(GSToREJSON)
+
+										}
+									}
+								} else {
+									//TODO Handle this error
+									fmt.Println("NO XML FOUND!!")
+								}
+							}
+						}
+					}
+
+				}
 			}
 		}
 
